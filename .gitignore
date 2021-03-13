@@ -2,5 +2,6 @@
 *
 
 # Except
-minecraft.m
-README.md
+!minecraft.m
+!README.md
+!.gitignore
