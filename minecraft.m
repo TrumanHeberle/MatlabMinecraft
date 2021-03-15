@@ -6,7 +6,7 @@ UPDATE_LIMIT = 0;       % minimum time before game state is updated (performance
 DRAW_LIMIT = 0;         % minimum time before frame is redrawn (performance)
 CHUNK_SIZE = 15;        % chunk width in block lengths (requires int)
 SEED = tic;             % unique game seed
-RANGE = 2;              % camera range in chunk lengths
+RANGE = 3;              % camera range in chunk lengths
 FOV = 45;               % camera field of view in degrees
 MOVE_SPEED = 15;        % move speed multiplier
 ROTATION_SPEED = 25e-4; % rotation speed multiplier
@@ -133,7 +133,7 @@ while running
             cpos_last = chunk_pos(pos_last);
             % crossed chunk border
             if ~isequal(cpos,cpos_last)
-                draw_chunks(cpos_last,cpos);
+                draw_chunks(cpos,cpos_last);
                 ra = ([-RANGE,RANGE]'+cpos+0.5)*CHUNK_SIZE;
                 xlim(ra(:,1));
                 ylim(ra(:,2));
@@ -154,105 +154,46 @@ end
 close all;
 
 %% Terrain Generation
-function block_id = terrain_function(x,y,z)
-    % returns the block id for the block at block position (x,y,z)
-    if z+2 <= sin(x)+cos(y)
-        block_id = B_GRASS;
-        return
-    end
-    block_id = B_AIR;
-end
 
 %% Chunking
-function blocks = generate_chunk(cx,cy,cz)
-    % initializes the block data for the chunk at chunk position (cx,cy,cz)
-    % initialize block data
-    blocks = zeros(CHUNK_SIZE,CHUNK_SIZE,CHUNK_SIZE);
-    ox = CHUNK_SIZE*cx-(CHUNK_SIZE+1)/2;
-    oy = CHUNK_SIZE*cy-(CHUNK_SIZE+1)/2;
-    oz = CHUNK_SIZE*cz-(CHUNK_SIZE+1)/2;
-    for x=1:CHUNK_SIZE
-        for y=1:CHUNK_SIZE
-            for z=1:CHUNK_SIZE
-                bid = terrain_function(x+ox,y+oy,z+oz);
-                if bid
-                    blocks(x,y,z) = bid;
-                end
-            end
-        end
-    end
-end
-
 function blocks = get_chunk(cx,cy,cz)
     % returns the block data for the chunk at chunk position (cx,cy,cz)
+    % assure cx is in map
     if ~isKey(chunk_map,cx)
         chunk_map(cx) = containers.Map("KeyType","int64","ValueType","any");
     end
+    % assure cy is in map
     cmx = chunk_map(cx);
     if ~isKey(cmx,cy)
         cmx(cy) = containers.Map("KeyType","int64","ValueType","any");
     end
+    % assure cz is in map
     cmy = cmx(cy);
     if ~isKey(cmy,cz)
-        blocks = generate_chunk(cx,cy,cz);
+        % generate block data
+        ox = CHUNK_SIZE*(cx-0.5)+0.5;
+        oy = CHUNK_SIZE*(cy-0.5)+0.5;
+        oz = CHUNK_SIZE*(cz-0.5)+0.5;
+        r = 1:CHUNK_SIZE;
+        x = r+ox;
+        y = (r+oy)';
+        z = permute(r+oz,[3,1,2]);
+        % assign block data
+        blocks = z+2<=sin(x)+cos(y);
         cmy(cz) = blocks;
         return;
     end
     blocks = cmy(cz);
 end
 
-function [xl,yl,zl,cl] = get_block_faces(b,bd,bu,bl,br,bf,bb)
-    % returns lists of face vertices for position and color for a block
-    % b with neighbors bd (bottom), bu (top), bl (left), br (rigth),
-    % bf (front), and bb (back)
-    xl=[];yl=[];zl=[];cl=[];
-    % bottom face
-    if ~bd
-        xl = [xl [-1;-1;0;0]];
-        yl = [yl [-1;0;0;-1]];
-        zl = [zl [-1;-1;-1;-1]];
-        cl = [cl BLOCK_COLORS(b,3,:)];
-    end
-    % top face
-    if ~bu
-        xl = [xl [-1;-1;0;0]];
-        yl = [yl [-1;0;0;-1]];
-        zl = [zl [0;0;0;0]];
-        cl = [cl BLOCK_COLORS(b,2,:)];
-    end
-    % left face
-    if ~bl
-        xl = [xl [-1;-1;-1;-1]];
-        yl = [yl [-1;0;0;-1]];
-        zl = [zl [0;0;-1;-1]];
-        cl = [cl BLOCK_COLORS(b,3,:)];
-    end
-    % right face
-    if ~br
-        xl = [xl [0;0;0;0]];
-        yl = [yl [-1;0;0;-1]];
-        zl = [zl [0;0;-1;-1]];
-        cl = [cl BLOCK_COLORS(b,4,:)];
-    end
-    % front face
-    if ~bf
-        xl = [xl [-1;-1;0;0]];
-        yl = [yl [-1;-1;-1;-1]];
-        zl = [zl [0;-1;-1;0]];
-        cl = [cl BLOCK_COLORS(b,5,:)];
-    end
-    % back face
-    if ~bb
-        xl = [xl [-1;-1;0;0]];
-        yl = [yl [0;0;0;0]];
-        zl = [zl [0;-1;-1;0]];
-        cl = [cl BLOCK_COLORS(b,6,:)];
-    end
-end
-
 function surface = generate_chunk_faces(cx,cy,cz)
     % returns a patch object for the chunk at chunk position (cx,cy,cz)
-    xl=[];yl=[];zl=[];cl=[];
+    potential = 6*ceil((CHUNK_SIZE^3)/2);
+    xl=zeros(4,potential);
+    yl=zeros(4,potential);
+    zl=zeros(4,potential);
+    cl=zeros(1,potential,3);
+    faces = 0;
     % get chunk and chunk neighbors
     bs = get_chunk(cx,cy,cz);
     nd = get_chunk(cx,cy,cz-1);
@@ -262,9 +203,10 @@ function surface = generate_chunk_faces(cx,cy,cz)
     nf = get_chunk(cx,cy-1,cz);
     nb = get_chunk(cx,cy+1,cz);
     % get chunk faces
-    for x=1:CHUNK_SIZE
-        for y=1:CHUNK_SIZE
-            for z=1:CHUNK_SIZE
+    r = 1:CHUNK_SIZE;
+    for x=r
+        for y=r
+            for z=r
                 b = bs(x,y,z);
                 if b
                     % get left/right neighbors
@@ -300,16 +242,68 @@ function surface = generate_chunk_faces(cx,cy,cz)
                         bu = bs(x,y,z+1);
                         bd = bs(x,y,z-1);
                     end
-                    % append faces
-                    [fx,fy,fz,fc] = get_block_faces(b,bd,bu,bl,br,bf,bb);
-                    xl = [xl x+fx];
-                    yl = [yl y+fy];
-                    zl = [zl z+fz];
-                    cl = [cl fc];
+                    % bottom face
+                    if ~bd
+                        faces = faces+1;
+                        xl(:,faces) = x+[-1;-1;0;0];
+                        yl(:,faces) = y+[-1;0;0;-1];
+                        zl(:,faces) = z+[-1;-1;-1;-1];
+                        cl(:,faces,:) = BLOCK_COLORS(b,1,:);
+                    end
+                    % top face
+                    if ~bu
+                        faces = faces+1;
+                        xl(:,faces) = x+[-1;-1;0;0];
+                        yl(:,faces) = y+[-1;0;0;-1];
+                        zl(:,faces) = z+[0;0;0;0];
+                        cl(:,faces,:) = BLOCK_COLORS(b,2,:);
+                    end
+                    % left face
+                    if ~bl
+                        faces = faces+1;
+                        xl(:,faces) = x+[-1;-1;-1;-1];
+                        yl(:,faces) = y+[-1;0;0;-1];
+                        zl(:,faces) = z+[0;0;-1;-1];
+                        cl(:,faces,:) = BLOCK_COLORS(b,3,:);
+                    end
+                    % right face
+                    if ~br
+                        faces = faces+1;
+                        xl(:,faces) = x+[0;0;0;0];
+                        yl(:,faces) = y+[-1;0;0;-1];
+                        zl(:,faces) = z+[0;0;-1;-1];
+                        cl(:,faces,:) = BLOCK_COLORS(b,4,:);
+                    end
+                    % front face
+                    if ~bf
+                        faces = faces+1;
+                        xl(:,faces) = x+[-1;-1;0;0];
+                        yl(:,faces) = y+[-1;-1;-1;-1];
+                        zl(:,faces) = z+[0;-1;-1;0];
+                        cl(:,faces,:) = BLOCK_COLORS(b,5,:);
+                    end
+                    % back face
+                    if ~bb
+                        faces = faces+1;
+                        xl(:,faces) = x+[-1;-1;0;0];
+                        yl(:,faces) = y+[0;0;0;0];
+                        zl(:,faces) = z+[0;-1;-1;0];
+                        cl(:,faces,:) = BLOCK_COLORS(b,6,:);
+                    end
                 end
             end
         end
     end
+    % no faces to render
+    if ~faces
+        surface = patch(ax,[],[],[],[],"EdgeColor","none");
+        return
+    end
+    % reduce set
+    xl = xl(:,1:faces);
+    yl = yl(:,1:faces);
+    zl = zl(:,1:faces);
+    cl = cl(:,1:faces,:);
     % shift faces by global chunk position
     xl = xl+CHUNK_SIZE*(cx-0.5);
     yl = yl+CHUNK_SIZE*(cy-0.5);
@@ -339,16 +333,20 @@ function surface = get_chunk_faces(cx,cy,cz)
     surface = cmy(cz);
 end
 
-function draw_chunks(cpos_last,cpos_new)
+function draw_chunks(cpos_new,cpos_last)
     % creates and draws chunks around the player
-    r = RANGE-1;
-    r = -r:r;
+    rval = RANGE-1;
+    r = -rval:rval;
     % unload previous
     for x=cpos_last(1)+r
         for y=cpos_last(2)+r
             for z=cpos_last(3)+r
-                s = get_chunk_faces(x,y,z);
-                set(s,"Visible","off");
+                if x<cpos_new(1)-rval || x>cpos_new(1)+rval || ...
+                        y<cpos_new(2)-rval || y>cpos_new(2)+rval ||...
+                        z<cpos_new(3)-rval || z>cpos_new(3)+rval
+                    s = get_chunk_faces(x,y,z);
+                    set(s,"Visible","off");
+                end
             end
         end
     end
@@ -356,8 +354,12 @@ function draw_chunks(cpos_last,cpos_new)
     for x=cpos_new(1)+r
         for y=cpos_new(2)+r
             for z=cpos_new(3)+r
-                s = get_chunk_faces(x,y,z);
-                set(s,"Visible","on");
+                if x<cpos_last(1)-rval || x>cpos_last(1)+rval || ...
+                        y<cpos_last(2)-rval || y>cpos_last(2)+rval ||...
+                        z<cpos_last(3)-rval || z>cpos_last(3)+rval
+                    s = get_chunk_faces(x,y,z);
+                    set(s,"Visible","on");
+                end
             end
         end
     end
@@ -391,7 +393,7 @@ function update(dt)
     % update player location
     vel = forward*(keymap(KEY_W)-keymap(KEY_S))+...
         right*(keymap(KEY_D)-keymap(KEY_A))+...
-        up*(keymap(KEY_SPACE)-keymap(KEY_SHIFT));
+        [0 0 1]*(keymap(KEY_SPACE)-keymap(KEY_SHIFT));
     if vel(1)~=0 || vel(2)~=0 || vel(3)~=0
         pos = pos + MOVE_SPEED*dt*vel/norm(vel);
     end
